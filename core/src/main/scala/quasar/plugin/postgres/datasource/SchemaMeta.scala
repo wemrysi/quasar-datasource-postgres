@@ -14,7 +14,20 @@
  * limitations under the License.
  */
 
-package quasar.plugin.postgres
+package quasar.plugin.postgres.datasource
 
-object PostgresDatasourceModule {
+import slamdata.Predef._
+
+import doobie.util.Read
+
+private[datasource] final case class SchemaMeta(schemaName: String)
+
+private[datasource] object SchemaMeta {
+  /** Only usable with the ResultSet returned from `DatabaseMetaData#getSchemas`
+    *
+    * 1. TABLE_SCHEM String => schema name
+    * 2. TABLE_CATALOG String => catalog name (may be null)
+    */
+  implicit val schemaMetaRead: Read[SchemaMeta] =
+    new Read[SchemaMeta](Nil, (rs, _) => SchemaMeta(rs.getString(1)))
 }
