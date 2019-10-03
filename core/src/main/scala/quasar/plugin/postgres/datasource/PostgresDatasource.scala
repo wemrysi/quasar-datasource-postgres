@@ -25,7 +25,7 @@ import cats.implicits._
 import doobie._
 import doobie.implicits._
 
-import fs2.{Pull, Stream}
+import fs2.{text, Pull, Stream}
 
 import quasar.api.datasource.DatasourceType
 import quasar.api.resource.{ResourcePathType => RPT, _}
@@ -48,7 +48,29 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr]
   val kind: DatasourceType = PostgresDatasourceModule.kind
 
   def evaluate(ir: InterpretedRead[ResourcePath]): F[QueryResult[F]] =
-    ???
+    pathToLoc(ir.path) match {
+      case Some(Right((schema, table))) =>
+        val back = tableExists(schema, table) flatMap[Either[RE, Stream[F, Byte]]] {
+          case true =>
+            FC.raw(c =>
+              Right(tableAsJsonBytes(schema, table)
+                .translate(λ[ConnectionIO ~> F](_.foldMap(xa.interpret).run(c)))))
+
+          case false =>
+            FC.pure[Either[RE, Stream[F, Byte]]](Left(RE.pathNotFound[RE](ir.path)))
+        }
+
+        back.transact(xa) flatMap {
+          case Right(bs) =>
+            QueryResult.typed(DataFormat.ldjson, bs, ir.stages).pure[F]
+
+          case Left(err) =>
+            MonadResourceErr[F].raiseError(err)
+        }
+
+      case _ =>
+        MonadResourceErr[F].raiseError(RE.notAResource(ir.path))
+    }
 
   def pathIsResource(path: ResourcePath): F[Boolean] =
     pathToLoc(path) match {
@@ -141,6 +163,14 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr]
       case schema /: ResourcePath.Root => Left(schema)
       case schema /: table /: ResourcePath.Root => Right((schema, table))
     }
+
+  private def tableAsJsonBytes(schema: Schema, table: Table): Stream[ConnectionIO, Byte] = {
+    val schemaFr = Fragment.const0(hygienicIdent(schema))
+    val tableFr = Fragment.const(hygienicIdent(table))
+    val sql = fr"SELECT to_json(t) FROM" ++ schemaFr ++ fr0"." ++ tableFr ++ fr0"AS t"
+
+    sql.query[String].stream.intersperse("\n").through(text.utf8Encode)
+  }
 
   private def tableExists(schema: Schema, table: Table): ConnectionIO[Boolean] =
     tables(locSelector(schema, table))
