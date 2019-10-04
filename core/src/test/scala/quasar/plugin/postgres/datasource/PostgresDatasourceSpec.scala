@@ -29,11 +29,15 @@ import fs2.Stream
 
 import org.specs2.specification.BeforeAfterAll
 
+import quasar.ScalarStages
 import quasar.api.resource.{ResourcePathType => RPT, _}
-import quasar.connector._
+import quasar.connector.{ResourceError => RE, _}
 import quasar.contrib.scalaz.MonadError_
+import quasar.qscript.InterpretedRead
 
 import scala.concurrent.ExecutionContext.Implicits.global
+
+import shims._
 
 object PostgresDatasourceSpec
     extends DatasourceSpec[IO, Stream[IO, ?], RPT.Physical]
@@ -47,8 +51,8 @@ object PostgresDatasourceSpec
   implicit val ioContextShift: ContextShift[IO] =
     IO.contextShift(global)
 
-  implicit val ioMonadResourceErr: MonadError_[IO, ResourceError] =
-    MonadError_.facet[IO](ResourceError.throwableP)
+  implicit val ioMonadResourceErr: MonadError_[IO, RE] =
+    MonadError_.facet[IO](RE.throwableP)
 
   val xa = Transactor.fromDriverManager[IO](
     PostgresDriverFqcn,
@@ -128,15 +132,52 @@ object PostgresDatasourceSpec
   }
 
   "evaluation" >> {
-    "path with length 0 fails with not a resource" >> todo
+    "path with length 0 fails with not a resource" >>* {
+      val ir = InterpretedRead(ResourcePath.root(), ScalarStages.Id)
 
-    "path with length 1 fails with not a resource" >> todo
+      MonadResourceErr.attempt(datasource.evaluate(ir))
+        .map(_.toEither must beLeft(RE.notAResource(ir.path)))
+    }
 
-    "path with length 3 fails with not a resource" >> todo
+    "path with length 1 fails with not a resource" >>* {
+      val ir = InterpretedRead(
+        ResourcePath.root() / ResourceName("a"),
+        ScalarStages.Id)
 
-    "path with length 2 that isn't a table fails with resource not found" >> todo
+      MonadResourceErr.attempt(datasource.evaluate(ir))
+        .map(_.toEither must beLeft(RE.notAResource(ir.path)))
+    }
 
-    "path to extant empty table returns empty results" >> todo
+    "path with length 3 fails with not a resource" >>* {
+      val ir = InterpretedRead(
+        ResourcePath.root() / ResourceName("x") / ResourceName("y") / ResourceName("z"),
+        ScalarStages.Id)
+
+      MonadResourceErr.attempt(datasource.evaluate(ir))
+        .map(_.toEither must beLeft(RE.notAResource(ir.path)))
+    }
+
+    "path with length 2 that isn't a table fails with path not found" >>* {
+      val ir = InterpretedRead(nonExistentPath, ScalarStages.Id)
+
+      MonadResourceErr.attempt(datasource.evaluate(ir))
+        .map(_.toEither must beLeft(RE.pathNotFound(ir.path)))
+    }
+
+    "path to extant empty table returns empty results" >>* {
+      val ir = InterpretedRead(
+        ResourcePath.root() / ResourceName("pgsrcSchemaA") / ResourceName("tableA1"),
+        ScalarStages.Id)
+
+      datasource.evaluate(ir) flatMap {
+        case QueryResult.Typed(fmt, bs, stages) =>
+          fmt must_=== DataFormat.ldjson
+          stages must_=== ScalarStages.Id
+          bs.compile.toList map (_ must beEmpty)
+
+        case _ => IO.pure(ko("Expected QueryResult.Typed"))
+      }
+    }
 
     "path to extant non-empty table returns rows as line-delimited json" >> todo
   }
