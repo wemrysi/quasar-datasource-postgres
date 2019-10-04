@@ -35,7 +35,7 @@ import quasar.qscript.InterpretedRead
 
 import shims._
 
-final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr](
+final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr: Sync](
     xa: Transactor[F])
     extends LightweightDatasource[F, Stream[F, ?], QueryResult[F]] {
 
@@ -50,23 +50,23 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr]
   def evaluate(ir: InterpretedRead[ResourcePath]): F[QueryResult[F]] =
     pathToLoc(ir.path) match {
       case Some(Right((schema, table))) =>
-        val back = tableExists(schema, table) flatMap[Either[RE, Stream[F, Byte]]] {
-          case true =>
-            FC.raw(c =>
-              Right(tableAsJsonBytes(schema, table)
-                .translate(λ[ConnectionIO ~> F](_.foldMap(xa.interpret).run(c)))))
-
-          case false =>
-            FC.pure[Either[RE, Stream[F, Byte]]](Left(RE.pathNotFound[RE](ir.path)))
+        val back = tableExists(schema, table) map { exists =>
+          if (exists)
+            Right(tableAsJsonBytes(schema, table))
+          else
+            Left(RE.pathNotFound[RE](ir.path))
         }
 
-        back.transact(xa) flatMap {
-          case Right(bs) =>
-            QueryResult.typed(DataFormat.ldjson, bs, ir.stages).pure[F]
+        xa.connect(xa.kernel)
+          .evalMap(c => runCIO(c)(back.map(_.map(_.translate(runCIO(c))))))
+          .allocated
+          .flatMap {
+            case (Right(s), release) =>
+              QueryResult.typed(DataFormat.ldjson, s.onFinalize(release), ir.stages).pure[F]
 
-          case Left(err) =>
-            MonadResourceErr[F].raiseError(err)
-        }
+            case (Left(re), release) =>
+              release >> MonadResourceErr[F].raiseError(re)
+          }
 
       case _ =>
         MonadResourceErr[F].raiseError(RE.notAResource(ir.path))
@@ -106,14 +106,14 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr]
               .stream
 
           val back = for {
-            opt <- paths.compile.lastOrError
+            c <- xa.connect(xa.kernel)
+            opt <- paths.translate(runCIO(c)).compile.resource.lastOrError
+          } yield opt.map(_.translate(runCIO(c)))
 
-            ts <- FC.raw(c => opt map { ps =>
-              ps.translate(λ[ConnectionIO ~> F](_.foldMap(xa.interpret).run(c)))
-            })
-          } yield ts
-
-          back.transact(xa)
+          back.allocated flatMap {
+            case (o @ None, release) => release.as(o)
+            case (Some(s), release) => s.onFinalize(release).some.pure[F]
+          }
 
         case None => (None: Option[Stream[F, (ResourceName, RPT.Physical)]]).pure[F]
       }
@@ -164,6 +164,9 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr]
       case schema /: table /: ResourcePath.Root => Right((schema, table))
     }
 
+  private def runCIO(c: java.sql.Connection): ConnectionIO ~> F =
+    λ[ConnectionIO ~> F](_.foldMap(xa.interpret).run(c))
+
   private def tableAsJsonBytes(schema: Schema, table: Table): Stream[ConnectionIO, Byte] = {
     val schemaFr = Fragment.const0(hygienicIdent(schema))
     val tableFr = Fragment.const(hygienicIdent(table))
@@ -196,7 +199,7 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr]
 object PostgresDatasource {
 
   /** The chunk size used for metadata streams. */
-  val MetaChunkSize: Int = 1024
+  val MetaChunkSize: Int = 10//1024
 
   /** The types of tables that should be visible during discovery.
     *

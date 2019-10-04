@@ -18,6 +18,10 @@ package quasar.plugin.postgres.datasource
 
 import slamdata.Predef._
 
+import argonaut._, Argonaut._
+import argonaut.JawnParser.facade
+
+import cats.~>
 import cats.effect._
 import cats.implicits._
 
@@ -26,6 +30,8 @@ import doobie.implicits._
 import doobie.util.ExecutionContexts
 
 import fs2.Stream
+
+import jawnfs2._
 
 import org.specs2.specification.BeforeAfterAll
 
@@ -116,8 +122,10 @@ object PostgresDatasourceSpec
       val teardown =
         (fr"DROP SCHEMA" ++ Fragment.const(s""""$schema"""") ++ fr0"CASCADE").update.run
 
-      Resource.make(setup)(_ => teardown.void)
-        .mapK(xa.trans)
+      xa.connect(xa.kernel)
+        .flatMap(c =>
+          Resource.make(setup)(_ => teardown.void)
+            .mapK(λ[ConnectionIO ~> IO](_.foldMap(xa.interpret).run(c))))
         .use(_ => datasource.pathIsResource(ResourcePath.root() / ResourceName(schema) / ResourceName(table)))
         .map(_ must beTrue)
     }
@@ -179,6 +187,45 @@ object PostgresDatasourceSpec
       }
     }
 
-    "path to extant non-empty table returns rows as line-delimited json" >> todo
+    "path to extant non-empty table returns rows as line-delimited json" >>* {
+      val path =
+        ResourcePath.root() / ResourceName("pgsrcSchemaA") / ResourceName("widgets")
+
+      val widgets = List(
+        Widget("X349", 34.23, 12.5),
+        Widget("XY34", 64.25, 23.1),
+        Widget("CR12", 0.023, 40.33))
+
+      val setup = for {
+        _ <- sql"""DROP TABLE IF EXISTS "pgsrcSchemaA"."widgets"""".update.run
+        _ <- sql"""CREATE TABLE "pgsrcSchemaA"."widgets" (serial VARCHAR, width DOUBLE PRECISION, height DOUBLE PRECISION)""".update.run
+        load = """INSERT INTO "pgsrcSchemaA"."widgets" (serial, width, height) VALUES (?, ?, ?)"""
+        _ <- Update[Widget](load).updateMany(widgets)
+      } yield ()
+
+      for {
+        _ <- setup.transact(xa)
+
+        qr <- datasource.evaluate(InterpretedRead(path, ScalarStages.Id))
+
+        ws <- qr match {
+          case QueryResult.Typed(_, s, _) =>
+            s.chunks.parseJsonStream[Json]
+              .map(_.as[Widget].toOption)
+              .unNone
+              .compile.toList
+
+          case _ =>
+            IO.pure(List.empty[Widget])
+        }
+      } yield ws must containTheSameElementsAs(widgets)
+    }
+  }
+
+  private final case class Widget(serial: String, width: Double, height: Double)
+
+  private object Widget {
+    implicit val widgetCodecJson: CodecJson[Widget] =
+      casecodec3(Widget.apply, Widget.unapply)("serial", "width", "height")
   }
 }
