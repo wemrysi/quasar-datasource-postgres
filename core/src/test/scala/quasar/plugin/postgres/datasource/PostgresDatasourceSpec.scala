@@ -35,8 +35,10 @@ import jawnfs2._
 
 import org.specs2.specification.BeforeAfterAll
 
-import quasar.ScalarStages
+import quasar.{IdStatus, ScalarStage, ScalarStages}
 import quasar.api.resource.{ResourcePathType => RPT, _}
+import quasar.api.table.ColumnType
+import quasar.common.CPath
 import quasar.connector.{ResourceError => RE, _}
 import quasar.contrib.scalaz.MonadError_
 import quasar.qscript.InterpretedRead
@@ -194,39 +196,125 @@ object PostgresDatasourceSpec
     }
 
     "path to extant non-empty table returns rows as line-delimited json" >>* {
-      val path =
-        ResourcePath.root() / ResourceName("pgsrcSchemaA") / ResourceName("widgets")
-
       val widgets = List(
         Widget("X349", 34.23, 12.5),
         Widget("XY34", 64.25, 23.1),
         Widget("CR12", 0.023, 40.33))
 
-      val setup = for {
-        _ <- sql"""DROP TABLE IF EXISTS "pgsrcSchemaA"."widgets"""".update.run
-        _ <- sql"""CREATE TABLE "pgsrcSchemaA"."widgets" (serial VARCHAR, width DOUBLE PRECISION, height DOUBLE PRECISION)""".update.run
-        load = """INSERT INTO "pgsrcSchemaA"."widgets" (serial, width, height) VALUES (?, ?, ?)"""
-        _ <- Update[Widget](load).updateMany(widgets)
-      } yield ()
-
       for {
-        _ <- setup.transact(xa)
-
-        qr <- datasource.evaluate(InterpretedRead(path, ScalarStages.Id))
-
-        ws <- qr match {
-          case QueryResult.Typed(_, s, _) =>
-            s.chunks.parseJsonStream[Json]
-              .map(_.as[Widget].toOption)
-              .unNone
-              .compile.toList
-
-          case _ =>
-            IO.pure(List.empty[Widget])
-        }
+        _ <- loadWidgets(widgets)
+        (_, ws) <- resultsOf[Widget](widgetsRead())
       } yield ws must containTheSameElementsAs(widgets)
     }
   }
+
+  "mask pushdown" >> {
+    val maskWidgets = List(
+      Widget("A", 1.1, 2.2),
+      Widget("B", 3.3, 4.4),
+      Widget("C", 5.5, 6.6),
+      Widget("D", 7.7, 8.8))
+
+    "projects when all masked paths begin with a field" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".serial") -> Set(ColumnType.String),
+        CPath.parse(".height") -> Set(ColumnType.Number)))
+
+      val expected = List(
+        Json("serial" := "A", "height" := 2.2),
+        Json("serial" := "B", "height" := 4.4),
+        Json("serial" := "C", "height" := 6.6),
+        Json("serial" := "D", "height" := 8.8))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        (_, ws) <- resultsOf[Json](widgetsRead(ScalarStages(IdStatus.ExcludeId, List(mask))))
+      } yield ws must containTheSameElementsAs(expected)
+    }
+
+    "noop when masked paths being with an index" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse("[2].serial") -> Set(ColumnType.String),
+        CPath.parse("[2].height") -> Set(ColumnType.Number)))
+
+      val stages = ScalarStages(IdStatus.ExcludeId, List(mask))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        r <- resultsOf[Widget](widgetsRead(stages))
+      } yield r must (stages, maskWidgets).zip(be_===, containTheSameElementsAs(_))
+    }
+
+    "noop when mask stage isn't first" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".foo.serial") -> Set(ColumnType.String),
+        CPath.parse(".foo.height") -> Set(ColumnType.Number)))
+
+      val stages = ScalarStages(IdStatus.ExcludeId, List(ScalarStage.Wrap("foo"), mask))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        r <- resultsOf[Widget](widgetsRead(stages))
+      } yield r must (stages, maskWidgets).zip(be_===, containTheSameElementsAs(_))
+    }
+
+    "eliminates mask stage when all paths are a single field and type is top" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".width") -> ColumnType.Top,
+        CPath.parse(".height") -> ColumnType.Top))
+
+      val expected = List(
+        Json("width" := 1.1, "height" := 2.2),
+        Json("width" := 3.3, "height" := 4.4),
+        Json("width" := 5.5, "height" := 6.6),
+        Json("width" := 7.7, "height" := 8.8))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        r <- resultsOf[Json](widgetsRead(ScalarStages(IdStatus.ExcludeId, List(mask))))
+      } yield r must (ScalarStages.Id, expected).zip(be_===, containTheSameElementsAs(_))
+    }
+
+    "retains mask stage when any path has length > 1" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".width[2]") -> ColumnType.Top,
+        CPath.parse(".height") -> ColumnType.Top))
+
+      val stages = ScalarStages(IdStatus.ExcludeId, List(mask))
+
+      val expected = List(
+        Json("width" := 1.1, "height" := 2.2),
+        Json("width" := 3.3, "height" := 4.4),
+        Json("width" := 5.5, "height" := 6.6),
+        Json("width" := 7.7, "height" := 8.8))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        r <- resultsOf[Json](widgetsRead(stages))
+      } yield r must (stages, expected).zip(be_===, containTheSameElementsAs(_))
+    }
+
+    "retains mask stage when any path has type != top" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".width") -> Set(ColumnType.Number),
+        CPath.parse(".height") -> ColumnType.Top))
+
+      val stages = ScalarStages(IdStatus.IncludeId, List(mask))
+
+      val expected = List(
+        Json("width" := 1.1, "height" := 2.2),
+        Json("width" := 3.3, "height" := 4.4),
+        Json("width" := 5.5, "height" := 6.6),
+        Json("width" := 7.7, "height" := 8.8))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        r <- resultsOf[Json](widgetsRead(stages))
+      } yield r must (stages, expected).zip(be_===, containTheSameElementsAs(_))
+    }
+  }
+
+  ////
 
   private final case class Widget(serial: String, width: Double, height: Double)
 
@@ -234,4 +322,32 @@ object PostgresDatasourceSpec
     implicit val widgetCodecJson: CodecJson[Widget] =
       casecodec3(Widget.apply, Widget.unapply)("serial", "width", "height")
   }
+
+  private def loadWidgets(widgets: List[Widget]): IO[Unit] =
+    xa.trans.apply(for {
+      _ <- sql"""DROP TABLE IF EXISTS "pgsrcSchemaA"."widgets"""".update.run
+      _ <- sql"""CREATE TABLE "pgsrcSchemaA"."widgets" (serial VARCHAR, width DECIMAL, height DECIMAL)""".update.run
+      load = """INSERT INTO "pgsrcSchemaA"."widgets" (serial, width, height) VALUES (?, ?, ?)"""
+      _ <- Update[Widget](load).updateMany(widgets)
+    } yield ())
+
+  private def widgetsRead(stages: ScalarStages = ScalarStages.Id)
+      : InterpretedRead[ResourcePath] =
+    InterpretedRead(
+      ResourcePath.root() / ResourceName("pgsrcSchemaA") / ResourceName("widgets"),
+      stages)
+
+  private def resultsOf[A: DecodeJson](ir: InterpretedRead[ResourcePath])
+      : IO[(ScalarStages, List[A])] =
+    datasource.evaluate(ir) flatMap {
+      case QueryResult.Typed(_, s, stages) =>
+        s.chunks.parseJsonStream[Json]
+          .map(_.as[A].toOption)
+          .unNone
+          .compile.toList
+          .tupleLeft(stages)
+
+      case qr =>
+        IO.raiseError(new RuntimeException(s"Expected QueryResult.Typed, received: $qr"))
+    }
 }

@@ -14,15 +14,26 @@
  * limitations under the License.
  */
 
-package quasar.plugin.postgres
+package quasar.plugin.postgres.datasource
 
-import slamdata.Predef._
+import slamdata.Predef.{Eq => _, _}
 
-package object datasource {
-  type Ident = String
-  type Schema = Ident
-  type Table = Ident
+import cats._
+import cats.data.NonEmptyList
+import cats.implicits._
 
-  val Redacted: String = "--REDACTED--"
-  val PostgresDriverFqcn: String = "org.postgresql.Driver"
+sealed trait ColumnProjections extends Product with Serializable
+
+object ColumnProjections {
+  final case class Explicit(names: NonEmptyList[Ident]) extends ColumnProjections
+  case object All extends ColumnProjections
+
+  implicit val columnProjectionsEq: Eq[ColumnProjections] =
+    Eq by {
+      case Explicit(ns) => Some(ns)
+      case All => None
+    }
+
+  implicit val columnProjectionsShow: Show[ColumnProjections] =
+    Show.fromToString
 }
