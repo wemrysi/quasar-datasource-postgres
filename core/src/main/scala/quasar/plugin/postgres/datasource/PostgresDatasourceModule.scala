@@ -30,6 +30,7 @@ import doobie.implicits._
 
 import eu.timepit.refined.auto._
 
+import java.net.URI
 import java.util.concurrent.Executors
 
 import org.slf4s.Logging
@@ -52,8 +53,8 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
   // The duration to await validation of the initial connection.
   val ValidationTimeout: FiniteDuration = 10.seconds
 
-  // Maximum number of database connections per-datasource.
-  val ConnectionPoolSize: Int = 10
+  // The default maximum number of database connections per-datasource.
+  val DefaultConnectionPoolSize: Int = 10
 
   val kind: DatasourceType = DatasourceType("postgres", 1L)
 
@@ -87,11 +88,13 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
 
       suffix <- EitherT.right(Resource.liftF(Sync[F].delay(Random.alphanumeric.take(6).mkString)))
 
-      awaitPool <- EitherT.right(awaitConnPool[F](s"pgsrc-await-$suffix", ConnectionPoolSize))
+      connPoolSize = cfg.connectionPoolSize getOrElse DefaultConnectionPoolSize
+
+      awaitPool <- EitherT.right(awaitConnPool[F](s"pgsrc-await-$suffix", connPoolSize))
 
       xaPool <- EitherT.right(transactPool[F](s"pgsrc-transact-$suffix"))
 
-      xa <- EitherT.right(hikariTransactor[F](cfg, awaitPool, xaPool))
+      xa <- EitherT.right(hikariTransactor[F](cfg.connectionUri, connPoolSize, awaitPool, xaPool))
 
       _ <- EitherT(Resource.liftF(validateConnection.transact(xa) recover {
         case NonFatal(ex: Exception) =>
@@ -123,7 +126,8 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       kind, c, new RuntimeException("Connection is invalid."))
 
   private def hikariTransactor[F[_]: Async: ContextShift](
-      cfg: Config,
+      connUri: URI,
+      connPoolSize: Int,
       connectPool: ExecutionContext,
       xaPool: BlockingContext)
       : Resource[F, HikariTransactor[F]] = {
@@ -131,9 +135,9 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
     HikariTransactor.initial[F](connectPool, xaPool.unwrap) evalMap { xa =>
       xa.configure { ds =>
         Sync[F] delay {
-          ds.setJdbcUrl(s"jdbc:${cfg.connectionUri}")
+          ds.setJdbcUrl(s"jdbc:$connUri")
           ds.setDriverClassName(PostgresDriverFqcn)
-          ds.setMaximumPoolSize(ConnectionPoolSize)
+          ds.setMaximumPoolSize(connPoolSize)
           xa
         }
       }

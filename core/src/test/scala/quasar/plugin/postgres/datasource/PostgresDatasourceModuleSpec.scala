@@ -25,6 +25,7 @@ import cats.implicits._
 
 import quasar.EffectfulQSpec
 import quasar.api.datasource.DatasourceError
+import quasar.api.resource.ResourcePath
 import quasar.connector.ResourceError
 import quasar.contrib.scalaz.MonadError_
 
@@ -56,13 +57,26 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
     }
 
     "fail when unable to connect to database" >>* {
-      val cfg = Json("connectionUri" := "postgresql://localhost:1234/foobar")
+      val cfg = Json("connectionUri" := "postgresql://localhost:1234/foobar?user=alice&password=secret")
 
       PostgresDatasourceModule.lightweightDatasource[IO](cfg) use {
         case Left(DatasourceError.ConnectionFailed(_, c, _)) =>
-          IO.pure(c must_=== cfg)
+          IO.pure(c.some must_=== cfg.as[Config].map(_.sanitized.asJson).toOption)
 
         case _ => ko("Expected a connection failed").pure[IO]
+      }
+    }
+
+    "succeeds with a valid config" >>* {
+      val cfg = Json("connectionUri" := "postgresql://localhost:5432/postgres?user=postgres&password=postgres")
+
+      PostgresDatasourceModule.lightweightDatasource[IO](cfg) use {
+        case Right(ds) =>
+          ds.prefixedChildPaths(ResourcePath.root())
+            .flatMap(_.sequence.unNone.compile.toList)
+            .map(_ must not(beEmpty))
+
+        case _ => ko("Expected connection to succeed").pure[IO]
       }
     }
   }

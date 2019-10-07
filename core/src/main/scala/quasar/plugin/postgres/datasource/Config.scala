@@ -26,7 +26,7 @@ import java.net.URI
 
 import scala.util.control.NonFatal
 
-final case class Config(connectionUri: URI) {
+final case class Config(connectionUri: URI, connectionPoolSize: Option[Int]) {
   @SuppressWarnings(Array("org.wartremover.warts.Null"))
   def sanitized: Config = {
     val sanitizedUserInfo =
@@ -78,6 +78,6 @@ object Config {
     implicit val uriEncodeJson: EncodeJson[URI] =
       EncodeJson.of[String].contramap(_.toString)
 
-    casecodec1(Config.apply, Config.unapply)("connectionUri")
+    casecodec2(Config.apply, Config.unapply)("connectionUri", "connectionPoolSize")
   }
 }
