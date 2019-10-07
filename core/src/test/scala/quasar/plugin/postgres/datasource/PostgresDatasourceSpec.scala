@@ -49,6 +49,12 @@ object PostgresDatasourceSpec
     extends DatasourceSpec[IO, Stream[IO, ?], RPT.Physical]
     with BeforeAfterAll {
 
+  // Required to avoid examples observing each others' database changes
+  // should be able to remove once
+  //
+  // https://app.clubhouse.io/data/story/9544/improve-datasourcespec-by-representing-the-datasource-under-test-as-a-cats-effect-resource
+  //
+  // is implemented.
   sequential
 
   // Uncomment to log all queries to STDOUT
