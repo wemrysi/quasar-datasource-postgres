@@ -68,7 +68,7 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
     }
 
     "succeeds with a valid config" >>* {
-      val cfg = Json("connectionUri" := "postgresql://localhost:5432/postgres?user=postgres&password=postgres")
+      val cfg = Json("connectionUri" := "postgresql://localhost:54322/postgres?user=postgres&password=postgres")
 
       PostgresDatasourceModule.lightweightDatasource[IO](cfg) use {
         case Right(ds) =>
