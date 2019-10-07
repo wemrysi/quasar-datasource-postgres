@@ -16,5 +16,9 @@
 
 package quasar.plugin.postgres
 
-object PostgresDatasourceModule {
+import slamdata.Predef._
+
+package object datasource {
+  val Redacted: String = "--REDACTED--"
+  val PostgresDriverFqcn: String = "org.postgresql.Driver"
 }

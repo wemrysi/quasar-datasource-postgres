@@ -7,6 +7,9 @@ stages:
   - name: publish
     if: NOT type = pull_request
 
+services:
+  - docker
+
 cache:
   directories:
     - $HOME/.ivy2/cache
@@ -25,21 +28,25 @@ env:
     - secure: "M9JY0DmRngRBf/NftZzzYRgB/qmJdTuTi9QxkTfPE6vaSZiAZLDxO0YJ6swn1sAHaJcecRIu6BR3XMtWMI3mkoalXkNf/ulg29XGdPbpPnmCKAjfmpAJo0o2UmUD9drQPo/qFWAa4WGu2Y4O2Mg85C5DGwn4z8yNwgermx9TOv85SN+u2I9lL9rwRf4Wiymz5+xGjutMpRCtqwobSmmxeAQjqzL8Wb0L1aCeh6iah64Q9se04bS69XglLXLGFyUoU/x9Eqq5d1KTQ5+Rk4DAT04NiZy2uJOv5jEuECO+jCet7GvlB1OcxXXKriifSmCVXbPerV1X+Uw4SHh4z6PlPko6UYbou5gnZaTbD9ZF3QyogA7dHR3sb83uLglONLD9CZZ87aJKwAdUicPyp1qkawatny2qD5YPa6dt9FMwJSPJhwF9O11FIJioMblxmM5/nyiDJXvkXUmgke+IJZ1VwHFcVGxf0Cqx6BVsw2A1/fAlMHfZ1bretQyQSHgYvYwg6+fhepWo4RQrCnYhJXKbCR3pDcZ6nYF8ytRm83WXGbjR3ufXBj5Qb0CiAsIdb1FjVDEoNytfrBBQ95poS778ZEKlxWTc0fpSYoA9YgrATTKfoZW+17r59kbQy3jWFz48gAIk6P5UaVtkKfaa0r1z3/1yuquRZfEzzWnMf3gUZTM="
     # DISCORD_WEBHOOK_TOKENS
     - secure: "UMbyX3/fI5H49EShjglPyS2oftBeS/iPDypZeZz18ktS8WXFaZM7g/vD1SS/w1gGdwS/lmNJ2Fyjm8B4XHS9GA0Qf+Una7n/C+hUmmSQGZ6MlIvCVGVr1YoYJnRx+03SNSnR11miDvs/6B7AqzNfEUveoVo90qjfcXtIGnPUwtLscfCOuSYkuKpT3hBo4VbWErG357U23o0tKpWL1x97+SRzj97YchPheyJcRRXwhsVnzmGzKpdoX6LrkFXNdCql/QH8aP5YIJOq9v1uh14HDxFrS0uDRB/h7mq3HQbzY3tLjEQJaSL/b5lr6v63V2f9Mckevuni5ynbYSBRcXU/Pk43HNIhIJt856pjkt3OYttMLuXrmjo3SsjxDUBDdoLqJKVVEoNTl9WNp/aKEPHQhwbDgB23zn212VjX1Nt5pWsQ5rs7md8ZYFZu4TJDoxUV2fE+mFHvUD/Uron6+34lKF5hyqyFFQ8zaYy1t5Jn5YLrvkd+IicXJ2ddDXfJlxJQA9/IMSdp3Mx1VZyRj0pq6TAd1apkSPOql+C3RE9xcZmK6qJpbra5lhUJE2sWeldxOPZJ0gWlEKahiCAdhWkOAbhv3HDZHB4zjt1ycP1v5nV1otqrX97LI6AVB36L8ZOcQ2qkt+BNZLMJQY5crslfKyMeUHFmPN6dlgI/pEC/gCE="
+  matrix:
+    - POSTGRES_MAJOR=9
+    - POSTGRES_MAJOR=10
+    - POSTGRES_MAJOR=11
 
 install:
   - mkdir scripts
   - $SBT transferCommonResources
   - scripts/commonSetup
 
+script:
+  - set -e
+  - docker-compose up -d postgres${POSTGRES_MAJOR}
+  - $SBT ++$TRAVIS_SCALA_VERSION test
+
 jobs:
   include:
-    - stage: test
-      script:
-        - set -e
-        - $SBT ++$TRAVIS_SCALA_VERSION test
-
     - stage: publish
-      env:
+      env: POSTGRES_MAJOR=9
       script:
         - set -e
         - $SBT transferPublishAndTagResources
