@@ -232,7 +232,7 @@ object PostgresDatasourceSpec
       } yield ws must containTheSameElementsAs(expected)
     }
 
-    "noop when masked paths being with an index" >>* {
+    "noop when a masked path doesn't begin with a field" >>* {
       val mask: ScalarStage = ScalarStage.Mask(Map(
         CPath.parse("[2].serial") -> Set(ColumnType.String),
         CPath.parse("[2].height") -> Set(ColumnType.Number)))
