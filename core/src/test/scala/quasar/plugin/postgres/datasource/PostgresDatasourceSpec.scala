@@ -312,6 +312,25 @@ object PostgresDatasourceSpec
         r <- resultsOf[Json](widgetsRead(stages))
       } yield r must (stages, expected).zip(be_===, containTheSameElementsAs(_))
     }
+
+    "retains mask stage when path has incompatible type" >>* {
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".width") -> Set(ColumnType.String),
+        CPath.parse(".height") -> ColumnType.Top))
+
+      val stages = ScalarStages(IdStatus.IncludeId, List(mask))
+
+      val expected = List(
+        Json("width" := 1.1, "height" := 2.2),
+        Json("width" := 3.3, "height" := 4.4),
+        Json("width" := 5.5, "height" := 6.6),
+        Json("width" := 7.7, "height" := 8.8))
+
+      for {
+        _ <- loadWidgets(maskWidgets)
+        r <- resultsOf[Json](widgetsRead(stages))
+      } yield r must (stages, expected).zip(be_===, containTheSameElementsAs(_))
+    }
   }
 
   ////
