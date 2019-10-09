@@ -331,6 +331,32 @@ object PostgresDatasourceSpec
         r <- resultsOf[Json](widgetsRead(stages))
       } yield r must (stages, expected).zip(be_===, containTheSameElementsAs(_))
     }
+
+    "retains deeper structure when initial field is masked" >>* {
+      val setup =
+        xa.trans.apply(for {
+          _ <- sql"""DROP TABLE IF EXISTS "pgsrcSchemaA"."nested"""".update.run
+          _ <- sql"""CREATE TABLE "pgsrcSchemaA"."nested" (x VARCHAR, y jsonb, z INT)""".update.run
+          _ <- sql"""INSERT INTO "pgsrcSchemaA"."nested" (x, y, z) VALUES ('A', '{"foo": 1, "bar": [2, 3, 4]}', 42), ('B', '{"foo": 23, "baz": {"quux": 7, "bar": ["x", 17]}}', 91)""".update.run
+        } yield ())
+
+      val expected = List(
+        Json("z" := 42, "y" := Json("foo" := 1, "bar" := List(2, 3, 4))),
+        Json("z" := 91, "y" := Json("foo" := 23, "baz" := Json("quux" := 7, "bar" := List(jString("x"), jNumber(17))))))
+
+      val mask: ScalarStage = ScalarStage.Mask(Map(
+        CPath.parse(".z") -> Set(ColumnType.Number),
+        CPath.parse(".y.bar") -> ColumnType.Top))
+
+      val stages = ScalarStages(IdStatus.ExcludeId, List(mask))
+
+      val read = InterpretedRead(
+        ResourcePath.root() / ResourceName("pgsrcSchemaA") / ResourceName("nested"),
+        stages)
+
+      (setup >> resultsOf[Json](read))
+        .map(_ must (stages, expected).zip(be_===, containTheSameElementsAs(_)))
+    }
   }
 
   ////
