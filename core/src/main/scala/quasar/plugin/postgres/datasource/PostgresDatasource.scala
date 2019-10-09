@@ -25,8 +25,11 @@ import cats.implicits._
 
 import doobie._
 import doobie.implicits._
+import doobie.util.log.{ExecFailure, ProcessingFailure, Success}
 
 import fs2.{text, Pull, Stream}
+
+import org.slf4s.Logging
 
 import quasar.{ScalarStage, ScalarStages}
 import quasar.api.datasource.DatasourceType
@@ -41,7 +44,8 @@ import shims._
 
 final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr: Sync](
     xa: Transactor[F])
-    extends LightweightDatasource[F, Stream[F, ?], QueryResult[F]] {
+    extends LightweightDatasource[F, Stream[F, ?], QueryResult[F]]
+    with Logging {
 
   import PostgresDatasource._
 
@@ -132,6 +136,19 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
   // `DatabaseMetaData#getTables`
   private val Wildcards: Set[Char] = Set('_', '%')
 
+  // Log doobie queries at DEBUG
+  private val logHandler: LogHandler =
+    LogHandler {
+      case Success(q, _, e, p) =>
+        log.debug(s"SUCCESS: `$q` in ${(e + p).toMillis} ms (${e.toMillis} ms exec, ${p.toMillis} ms proc)")
+
+      case ExecFailure(q, _, e, t) =>
+        log.debug(s"EXECUTION_FAILURE: `$q` after ${e.toMillis} ms, detail: ${t.getMessage}", t)
+
+      case ProcessingFailure(q, _, e, p, t) =>
+        log.debug(s"PROCESSING_FAILURE: `$q` after ${(e + p).toMillis} ms (${e.toMillis} ms exec, ${p.toMillis} ms proc (failed)), detail: ${t.getMessage}", t)
+    }
+
   // We use `tables` here to constrain discovered schemas
   // to be only those containing visible tables.
   private def allSchemas: Stream[ConnectionIO, String] =
@@ -208,7 +225,10 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
     val sql =
       fr"SELECT to_json(t) FROM" ++ fromFr ++ fr0"AS t"
 
-    sql.query[String].stream.intersperse("\n").through(text.utf8Encode)
+    sql.queryWithLogHandler[String](logHandler)
+      .stream
+      .intersperse("\n")
+      .through(text.utf8Encode)
   }
 
   private def tableExists(schema: Schema, table: Table): ConnectionIO[Boolean] =
