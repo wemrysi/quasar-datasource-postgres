@@ -19,6 +19,7 @@ package quasar.plugin.postgres.datasource
 import slamdata.Predef._
 
 import cats.~>
+import cats.data.NonEmptyList
 import cats.effect._
 import cats.implicits._
 
@@ -27,8 +28,11 @@ import doobie.implicits._
 
 import fs2.{text, Pull, Stream}
 
+import quasar.{ScalarStage, ScalarStages}
 import quasar.api.datasource.DatasourceType
 import quasar.api.resource.{ResourcePathType => RPT, _}
+import quasar.api.table.ColumnType
+import quasar.common.CPathField
 import quasar.connector.{ResourceError => RE, _}
 import quasar.connector.datasource.LightweightDatasource
 import quasar.qscript.InterpretedRead
@@ -41,10 +45,6 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
 
   import PostgresDatasource._
 
-  type Ident = String
-  type Schema = Ident
-  type Table = Ident
-
   val kind: DatasourceType = PostgresDatasourceModule.kind
 
   def evaluate(ir: InterpretedRead[ResourcePath]): F[QueryResult[F]] =
@@ -52,17 +52,23 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
       case Some(Right((schema, table))) =>
         val back = tableExists(schema, table) map { exists =>
           if (exists)
-            Right(tableAsJsonBytes(schema, table))
+            Right(maskedColumns(ir.stages) match {
+              case Some((columns, nextStages)) =>
+                (tableAsJsonBytes(schema, ColumnProjections.Explicit(columns), table), nextStages)
+
+              case None =>
+                (tableAsJsonBytes(schema, ColumnProjections.All, table), ir.stages)
+            })
           else
             Left(RE.pathNotFound[RE](ir.path))
         }
 
         xa.connect(xa.kernel)
-          .evalMap(c => runCIO(c)(back.map(_.map(_.translate(runCIO(c))))))
+          .evalMap(c => runCIO(c)(back.map(_.map(_.leftMap(_.translate(runCIO(c)))))))
           .allocated
           .flatMap {
-            case (Right(s), release) =>
-              QueryResult.typed(DataFormat.ldjson, s.onFinalize(release), ir.stages).pure[F]
+            case (Right((s, stages)), release) =>
+              QueryResult.typed(DataFormat.ldjson, s.onFinalize(release), stages).pure[F]
 
             case (Left(re), release) =>
               release >> MonadResourceErr[F].raiseError(re)
@@ -158,6 +164,22 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
   private def hygienicIdent(ident: Ident): Ident =
     s""""${ident.replace("\"", "\"\"")}""""
 
+  private def maskedColumns: ScalarStages => Option[(NonEmptyList[String], ScalarStages)] = {
+    case ss @ ScalarStages(idStatus, ScalarStage.Mask(m) :: t) =>
+      for {
+        paths <- m.keySet.toList.toNel
+
+        fields0 <- paths.traverse(_.head collect { case CPathField(f) => f })
+        fields = fields0.distinct
+
+        eliminated = m forall {
+          case (p, t) => p.tail.nodes.isEmpty && t === ColumnType.Top
+        }
+      } yield (fields, if (eliminated) ScalarStages(idStatus, t) else ss)
+
+    case _ => None
+  }
+
   private def pathToLoc(rp: ResourcePath): Loc =
     Some(rp) collect {
       case schema /: ResourcePath.Root => Left(schema)
@@ -167,10 +189,24 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
   private def runCIO(c: java.sql.Connection): ConnectionIO ~> F =
     λ[ConnectionIO ~> F](_.foldMap(xa.interpret).run(c))
 
-  private def tableAsJsonBytes(schema: Schema, table: Table): Stream[ConnectionIO, Byte] = {
+  private def tableAsJsonBytes(schema: Schema, columns: ColumnProjections, table: Table)
+      : Stream[ConnectionIO, Byte] = {
+
     val schemaFr = Fragment.const0(hygienicIdent(schema))
     val tableFr = Fragment.const(hygienicIdent(table))
-    val sql = fr"SELECT to_json(t) FROM" ++ schemaFr ++ fr0"." ++ tableFr ++ fr0"AS t"
+    val locFr = schemaFr ++ fr0"." ++ tableFr
+
+    val fromFr = columns match {
+      case ColumnProjections.Explicit(cs) =>
+        val colsFr = cs.map(n => Fragment.const(hygienicIdent(n))).intercalate(fr",")
+        Fragments.parentheses(fr"SELECT" ++ colsFr ++ fr"FROM" ++ locFr)
+
+      case ColumnProjections.All =>
+        locFr
+    }
+
+    val sql =
+      fr"SELECT to_json(t) FROM" ++ fromFr ++ fr0"AS t"
 
     sql.query[String].stream.intersperse("\n").through(text.utf8Encode)
   }
