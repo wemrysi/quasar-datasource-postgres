@@ -23,7 +23,7 @@ import argonaut._, Argonaut._
 import cats.effect._
 import cats.implicits._
 
-import quasar.EffectfulQSpec
+import quasar.{EffectfulQSpec, RateLimiter}
 import quasar.api.datasource.DatasourceError
 import quasar.api.resource.ResourcePath
 import quasar.connector.ResourceError
@@ -48,36 +48,39 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
     "fail with malformed config when not decodable" >>* {
       val cfg = Json("malformed" := true)
 
-      PostgresDatasourceModule.lightweightDatasource[IO](cfg) use {
-        case Left(DatasourceError.MalformedConfiguration(_, c, _)) =>
-          IO.pure(c must_=== jString(Redacted))
+      RateLimiter[IO](1.0).flatMap(rl =>
+        PostgresDatasourceModule.lightweightDatasource[IO](cfg, rl) use {
+          case Left(DatasourceError.MalformedConfiguration(_, c, _)) =>
+            IO.pure(c must_=== jString(Redacted))
 
-        case _ => ko("Expected a malformed configuration").pure[IO]
-      }
+          case _ => ko("Expected a malformed configuration").pure[IO]
+        })
     }
 
     "fail when unable to connect to database" >>* {
       val cfg = Json("connectionUri" := "postgresql://localhost:1234/foobar?user=alice&password=secret")
 
-      PostgresDatasourceModule.lightweightDatasource[IO](cfg) use {
-        case Left(DatasourceError.ConnectionFailed(_, c, _)) =>
-          IO.pure(c.some must_=== cfg.as[Config].map(_.sanitized.asJson).toOption)
+      RateLimiter[IO](1.0).flatMap(rl =>
+        PostgresDatasourceModule.lightweightDatasource[IO](cfg, rl) use {
+          case Left(DatasourceError.ConnectionFailed(_, c, _)) =>
+            IO.pure(c.some must_=== cfg.as[Config].map(_.sanitized.asJson).toOption)
 
-        case _ => ko("Expected a connection failed").pure[IO]
-      }
+          case _ => ko("Expected a connection failed").pure[IO]
+        })
     }
 
     "succeeds with a valid config" >>* {
       val cfg = Json("connectionUri" := "postgresql://localhost:54322/postgres?user=postgres&password=postgres")
 
-      PostgresDatasourceModule.lightweightDatasource[IO](cfg) use {
-        case Right(ds) =>
-          ds.prefixedChildPaths(ResourcePath.root())
-            .flatMap(_.sequence.unNone.compile.toList)
-            .map(_ must not(beEmpty))
+      RateLimiter[IO](1.0).flatMap(rl =>
+        PostgresDatasourceModule.lightweightDatasource[IO](cfg, rl) use {
+          case Right(ds) =>
+            ds.prefixedChildPaths(ResourcePath.root())
+              .flatMap(_.sequence.unNone.compile.toList)
+              .map(_ must not(beEmpty))
 
-        case _ => ko("Expected connection to succeed").pure[IO]
-      }
+          case _ => ko("Expected connection to succeed").pure[IO]
+        })
     }
   }
 }
