@@ -35,6 +35,7 @@ import java.util.concurrent.Executors
 
 import org.slf4s.Logging
 
+import quasar.RateLimiter
 import quasar.api.datasource.{DatasourceError => DE, DatasourceType}
 import quasar.concurrent.{BlockingContext, NamedDaemonThreadFactory}
 import quasar.connector.{LightweightDatasourceModule, MonadResourceErr}
@@ -64,7 +65,8 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       .getOr(jEmptyObject)
 
   def lightweightDatasource[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
-      config: Json)(
+      config: Json,
+      rateLimiter: RateLimiter[F])(
       implicit ec: ExecutionContext)
       : Resource[F, Either[InitErr, LightweightDatasourceModule.DS[F]]] = {
 
