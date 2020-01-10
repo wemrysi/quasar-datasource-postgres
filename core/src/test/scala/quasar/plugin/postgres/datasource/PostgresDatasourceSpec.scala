@@ -27,7 +27,6 @@ import cats.implicits._
 
 import doobie._
 import doobie.implicits._
-import doobie.util.ExecutionContexts
 
 import fs2.Stream
 
@@ -39,6 +38,7 @@ import quasar.{IdStatus, ScalarStage, ScalarStages}
 import quasar.api.resource.{ResourcePathType => RPT, _}
 import quasar.api.table.ColumnType
 import quasar.common.CPath
+import quasar.{concurrent => qc}
 import quasar.connector.{ResourceError => RE, _}
 import quasar.contrib.scalaz.MonadError_
 import quasar.qscript.InterpretedRead
@@ -68,10 +68,12 @@ object PostgresDatasourceSpec
   implicit val ioMonadResourceErr: MonadError_[IO, RE] =
     MonadError_.facet[IO](RE.throwableP)
 
+  val xaBlocker = qc.Blocker.cached("postgres-datasource-spec")
+
   val xa = Transactor.fromDriverManager[IO](
     PostgresDriverFqcn,
     "jdbc:postgresql://localhost:54322/postgres?user=postgres&password=postgres",
-    ExecutionContexts.synchronous)
+    xaBlocker)
 
   val datasource = new PostgresDatasource(xa)
 

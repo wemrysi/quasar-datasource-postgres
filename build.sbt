@@ -10,7 +10,7 @@ scmInfo in ThisBuild := Some(ScmInfo(
   url("https://github.com/slamdata/quasar-datasource-postgres"),
   "scm:git@github.com:slamdata/quasar-datasource-postgres.git"))
 
-val DoobieVersion = "0.7.0"
+val DoobieVersion = "0.8.8"
 
 lazy val root = project
   .in(file("."))
