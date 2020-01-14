@@ -22,6 +22,7 @@ import argonaut._, Argonaut._
 
 import cats.data._
 import cats.effect._
+import cats.kernel.Hash
 import cats.implicits._
 
 import doobie._
@@ -35,7 +36,7 @@ import java.util.concurrent.Executors
 
 import org.slf4s.Logging
 
-import quasar.RateLimiter
+import quasar.RateLimiting
 import quasar.api.datasource.{DatasourceError => DE, DatasourceType}
 import quasar.concurrent.{BlockingContext, NamedDaemonThreadFactory}
 import quasar.connector.{LightweightDatasourceModule, MonadResourceErr}
@@ -64,9 +65,9 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       .map(_.sanitized.asJson)
       .getOr(jEmptyObject)
 
-  def lightweightDatasource[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer](
+  def lightweightDatasource[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer, A: Hash](
       config: Json,
-      rateLimiter: RateLimiter[F])(
+      rateLimiter: RateLimiting[F, A])(
       implicit ec: ExecutionContext)
       : Resource[F, Either[InitErr, LightweightDatasourceModule.DS[F]]] = {
 
