@@ -23,12 +23,13 @@ import argonaut._, Argonaut._
 import cats.effect._
 import cats.implicits._
 
-import quasar.{EffectfulQSpec, RateLimiter}
+import quasar.{EffectfulQSpec, RateLimiter, NoopRateLimitUpdater, RateLimiting}
 import quasar.api.datasource.DatasourceError
 import quasar.api.resource.ResourcePath
 import quasar.connector.ResourceError
 import quasar.contrib.scalaz.MonadError_
 
+import java.util.UUID
 import scala.concurrent.ExecutionContext.Implicits.global
 
 import shims._
@@ -44,12 +45,15 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
   implicit val ioMonadResourceErr: MonadError_[IO, ResourceError] =
     MonadError_.facet[IO](ResourceError.throwableP)
 
+  val rateLimiting: IO[RateLimiting[IO, UUID]] =
+    RateLimiter(1.0, IO.delay(UUID.randomUUID()), NoopRateLimitUpdater[IO, UUID])
+
   "initialization" should {
     "fail with malformed config when not decodable" >>* {
       val cfg = Json("malformed" := true)
 
-      RateLimiter[IO](1.0).flatMap(rl =>
-        PostgresDatasourceModule.lightweightDatasource[IO](cfg, rl) use {
+      rateLimiting.flatMap(rl =>
+        PostgresDatasourceModule.lightweightDatasource[IO, UUID](cfg, rl) use {
           case Left(DatasourceError.MalformedConfiguration(_, c, _)) =>
             IO.pure(c must_=== jString(Redacted))
 
@@ -60,8 +64,8 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
     "fail when unable to connect to database" >>* {
       val cfg = Json("connectionUri" := "postgresql://localhost:1234/foobar?user=alice&password=secret")
 
-      RateLimiter[IO](1.0).flatMap(rl =>
-        PostgresDatasourceModule.lightweightDatasource[IO](cfg, rl) use {
+      rateLimiting.flatMap(rl =>
+        PostgresDatasourceModule.lightweightDatasource[IO, UUID](cfg, rl) use {
           case Left(DatasourceError.ConnectionFailed(_, c, _)) =>
             IO.pure(c.some must_=== cfg.as[Config].map(_.sanitized.asJson).toOption)
 
@@ -72,8 +76,8 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
     "succeeds with a valid config" >>* {
       val cfg = Json("connectionUri" := "postgresql://localhost:54322/postgres?user=postgres&password=postgres")
 
-      RateLimiter[IO](1.0).flatMap(rl =>
-        PostgresDatasourceModule.lightweightDatasource[IO](cfg, rl) use {
+      rateLimiting.flatMap(rl =>
+        PostgresDatasourceModule.lightweightDatasource[IO, UUID](cfg, rl) use {
           case Right(ds) =>
             ds.prefixedChildPaths(ResourcePath.root())
               .flatMap(_.sequence.unNone.compile.toList)
