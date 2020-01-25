@@ -39,7 +39,7 @@ import org.slf4s.Logging
 import quasar.RateLimiting
 import quasar.api.datasource.{DatasourceError => DE, DatasourceType}
 import quasar.{concurrent => qc}
-import quasar.connector.{LightweightDatasourceModule, MonadResourceErr}
+import quasar.connector.{ByteStore, LightweightDatasourceModule, MonadResourceErr}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
@@ -65,7 +65,8 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
 
   def lightweightDatasource[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer, A: Hash](
       config: Json,
-      rateLimiter: RateLimiting[F, A])(
+      rateLimiter: RateLimiting[F, A],
+      byteStore: ByteStore[F])(
       implicit ec: ExecutionContext)
       : Resource[F, Either[InitErr, LightweightDatasourceModule.DS[F]]] = {
 
