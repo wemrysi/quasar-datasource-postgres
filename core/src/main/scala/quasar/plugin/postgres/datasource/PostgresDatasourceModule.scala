@@ -38,15 +38,13 @@ import org.slf4s.Logging
 
 import quasar.RateLimiting
 import quasar.api.datasource.{DatasourceError => DE, DatasourceType}
-import quasar.concurrent.{BlockingContext, NamedDaemonThreadFactory}
+import quasar.{concurrent => qc}
 import quasar.connector.{ByteStore, LightweightDatasourceModule, MonadResourceErr}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 import scala.util.Random
 import scala.util.control.NonFatal
-
-import scalaz.syntax.tag._
 
 object PostgresDatasourceModule extends LightweightDatasourceModule with Logging {
 
@@ -119,7 +117,7 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       : Resource[F, ExecutionContext] = {
 
     val alloc =
-      F.delay(Executors.newFixedThreadPool(size, NamedDaemonThreadFactory(name)))
+      F.delay(Executors.newFixedThreadPool(size, qc.NamedDaemonThreadFactory(name)))
 
     Resource.make(alloc)(es => F.delay(es.shutdown()))
       .map(ExecutionContext.fromExecutor)
@@ -133,10 +131,10 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       connUri: URI,
       connPoolSize: Int,
       connectPool: ExecutionContext,
-      xaPool: BlockingContext)
+      xaBlocker: Blocker)
       : Resource[F, HikariTransactor[F]] = {
 
-    HikariTransactor.initial[F](connectPool, xaPool.unwrap) evalMap { xa =>
+    HikariTransactor.initial[F](connectPool, xaBlocker) evalMap { xa =>
       xa.configure { ds =>
         Sync[F] delay {
           ds.setJdbcUrl(s"jdbc:$connUri")
@@ -149,12 +147,12 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
   }
 
   private def transactPool[F[_]](name: String)(implicit F: Sync[F])
-      : Resource[F, BlockingContext] = {
+      : Resource[F, Blocker] = {
 
     val alloc =
-      F.delay(Executors.newCachedThreadPool(NamedDaemonThreadFactory(name)))
+      F.delay(Executors.newCachedThreadPool(qc.NamedDaemonThreadFactory(name)))
 
     Resource.make(alloc)(es => F.delay(es.shutdown()))
-      .map(es => BlockingContext(ExecutionContext.fromExecutor(es)))
+      .map(es => qc.Blocker(ExecutionContext.fromExecutor(es)))
   }
 }

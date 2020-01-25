@@ -10,7 +10,7 @@ scmInfo in ThisBuild := Some(ScmInfo(
   url("https://github.com/slamdata/quasar-datasource-postgres"),
   "scm:git@github.com:slamdata/quasar-datasource-postgres.git"))
 
-val DoobieVersion = "0.7.0"
+val DoobieVersion = "0.8.8"
 
 lazy val root = project
   .in(file("."))
@@ -42,7 +42,7 @@ lazy val core = project
     libraryDependencies ++= Seq(
       // TODO: Depend on this by default in sbt-quasar-plugin
       "com.slamdata" %% "quasar-foundation" % quasarPluginQuasarVersion.value % "test->test",
-      "org.http4s" %% "jawn-fs2" % "0.14.2" % Test,
+      "org.http4s" %% "jawn-fs2" % "0.15.0" % Test,
       "io.argonaut" %% "argonaut-jawn" % "6.2.3" % Test
     ))
   .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)
