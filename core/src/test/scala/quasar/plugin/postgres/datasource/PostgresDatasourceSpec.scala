@@ -19,7 +19,6 @@ package quasar.plugin.postgres.datasource
 import slamdata.Predef._
 
 import argonaut._, Argonaut._
-import argonaut.JawnParser.facade
 
 import cats.~>
 import cats.effect._
@@ -35,6 +34,7 @@ import jawnfs2._
 import org.specs2.specification.BeforeAfterAll
 
 import quasar.{IdStatus, ScalarStage, ScalarStages}
+import quasar.contrib.argonaut.JawnParser.facade
 import quasar.api.resource.{ResourcePathType => RPT, _}
 import quasar.api.table.ColumnType
 import quasar.common.CPath
