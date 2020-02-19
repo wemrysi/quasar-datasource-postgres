@@ -34,12 +34,13 @@ import jawnfs2._
 import org.specs2.specification.BeforeAfterAll
 
 import quasar.{IdStatus, ScalarStage, ScalarStages}
-import quasar.contrib.argonaut.JawnParser.facade
+import quasar.api.ColumnType
 import quasar.api.resource.{ResourcePathType => RPT, _}
-import quasar.api.table.ColumnType
 import quasar.common.CPath
 import quasar.{concurrent => qc}
 import quasar.connector.{ResourceError => RE, _}
+import quasar.connector.datasource.{DatasourceSpec, LightweightDatasourceModule}
+import quasar.contrib.argonaut.JawnParser.facade
 import quasar.contrib.scalaz.MonadError_
 import quasar.qscript.InterpretedRead
 
@@ -106,6 +107,11 @@ object PostgresDatasourceSpec
     } yield ()
 
     teardown.transact(xa).unsafeRunSync()
+  }
+
+  implicit class DatasourceOps(val ds: LightweightDatasourceModule.DS[IO]) extends scala.AnyVal {
+    def evaluate(ir: InterpretedRead[ResourcePath]) =
+      ds.loadFull(ir) getOrElseF IO.raiseError(new RuntimeException("No batch loader!"))
   }
 
   "schema handling" >> {

@@ -39,7 +39,8 @@ import org.slf4s.Logging
 import quasar.RateLimiting
 import quasar.api.datasource.{DatasourceError => DE, DatasourceType}
 import quasar.{concurrent => qc}
-import quasar.connector.{ByteStore, LightweightDatasourceModule, MonadResourceErr}
+import quasar.connector.{ByteStore, MonadResourceErr}
+import quasar.connector.datasource.LightweightDatasourceModule
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
