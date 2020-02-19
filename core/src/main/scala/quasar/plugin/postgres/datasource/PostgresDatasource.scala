@@ -32,12 +32,12 @@ import fs2.{text, Pull, Stream}
 import org.slf4s.Logging
 
 import quasar.{ScalarStage, ScalarStages}
+import quasar.api.ColumnType
 import quasar.api.datasource.DatasourceType
 import quasar.api.resource.{ResourcePathType => RPT, _}
-import quasar.api.table.ColumnType
 import quasar.common.CPathField
 import quasar.connector.{ResourceError => RE, _}
-import quasar.connector.datasource.LightweightDatasource
+import quasar.connector.datasource.{BatchLoader, LightweightDatasource, Loader}
 import quasar.qscript.InterpretedRead
 
 import shims._
@@ -51,7 +51,7 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
 
   val kind: DatasourceType = PostgresDatasourceModule.kind
 
-  def evaluate(ir: InterpretedRead[ResourcePath]): F[QueryResult[F]] =
+  val loaders = NonEmptyList.of(Loader.Batch(BatchLoader.Full { (ir: InterpretedRead[ResourcePath]) =>
     pathToLoc(ir.path) match {
       case Some(Right((schema, table))) =>
         val back = tableExists(schema, table) map { exists =>
@@ -81,6 +81,7 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
       case _ =>
         MonadResourceErr[F].raiseError(RE.notAResource(ir.path))
     }
+  }))
 
   def pathIsResource(path: ResourcePath): F[Boolean] =
     pathToLoc(path) match {
