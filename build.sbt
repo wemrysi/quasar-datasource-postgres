@@ -26,7 +26,7 @@ lazy val core = project
 
     quasarPluginName := "postgres",
 
-    quasarPluginQuasarVersion := IO.read(file("./quasar-version")).trim,
+    quasarPluginQuasarVersion := managedVersions.value("slamdata-quasar"),
 
     quasarPluginDatasourceFqcn := Some("quasar.plugin.postgres.datasource.PostgresDatasourceModule$"),
 
