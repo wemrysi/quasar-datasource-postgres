@@ -2,15 +2,17 @@ import scala.collection.Seq
 
 ThisBuild / scalaVersion := "2.12.10"
 
+ThisBuild / githubRepository := "quasar-datasource-postgres"
+
 performMavenCentralSync in ThisBuild := false   // basically just ignores all the sonatype sync parts of things
 
 publishAsOSSProject in ThisBuild := true
 
-homepage in ThisBuild := Some(url("https://github.com/slamdata/quasar-datasource-postgres"))
+homepage in ThisBuild := Some(url("https://github.com/precog/quasar-datasource-postgres"))
 
 scmInfo in ThisBuild := Some(ScmInfo(
-  url("https://github.com/slamdata/quasar-datasource-postgres"),
-  "scm:git@github.com:slamdata/quasar-datasource-postgres.git"))
+  url("https://github.com/precog/quasar-datasource-postgres"),
+  "scm:git@github.com:precog/quasar-datasource-postgres.git"))
 
 val DoobieVersion = "0.8.8"
 
@@ -26,7 +28,7 @@ lazy val core = project
 
     quasarPluginName := "postgres",
 
-    quasarPluginQuasarVersion := managedVersions.value("slamdata-quasar"),
+    quasarPluginQuasarVersion := managedVersions.value("precog-quasar"),
 
     quasarPluginDatasourceFqcn := Some("quasar.plugin.postgres.datasource.PostgresDatasourceModule$"),
 
@@ -43,8 +45,8 @@ lazy val core = project
 
     libraryDependencies ++= Seq(
       // TODO: Depend on this by default in sbt-quasar-plugin
-      "com.slamdata" %% "quasar-foundation" % quasarPluginQuasarVersion.value % "test->test",
+      "com.precog" %% "quasar-foundation" % quasarPluginQuasarVersion.value % "test->test",
       "org.http4s" %% "jawn-fs2" % "1.0.0-RC2" % Test,
       "io.argonaut" %% "argonaut-jawn" % "6.3.0-M2" % Test
     ))
-  .enablePlugins(AutomateHeaderPlugin, QuasarPlugin)
+  .enablePlugins(QuasarPlugin)
