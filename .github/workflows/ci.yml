@@ -28,6 +28,7 @@ jobs:
         os: [ubuntu-latest]
         scala: [2.12.10]
         java: [adopt@1.8]
+        postgres: [9, 10, 11]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout current branch (fast)
@@ -76,6 +77,9 @@ jobs:
         with:
           path: ~/.sbt
           key: ${{ runner.os }}-sbt-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Start postgres ${{ matrix.postgres }} container
+        run: docker-compose up -d postgres${{ matrix.postgres }}
 
       - name: Check that workflows are up to date
         run: $SBT ++${{ matrix.scala }} githubWorkflowCheck
