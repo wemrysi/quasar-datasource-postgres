@@ -80,7 +80,7 @@ object PostgresDatasourceModuleSpec extends EffectfulQSpec[IO] {
         PostgresDatasourceModule.lightweightDatasource[IO, UUID](cfg, rl, ByteStore.void[IO]) use {
           case Right(ds) =>
             ds.prefixedChildPaths(ResourcePath.root())
-              .flatMap(_.sequence.unNone.compile.toList)
+              .use(_.sequence.unNone.compile.toList)
               .map(_ must not(beEmpty))
 
           case _ => ko("Expected connection to succeed").pure[IO]

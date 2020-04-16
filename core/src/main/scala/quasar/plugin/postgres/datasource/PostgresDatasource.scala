@@ -42,9 +42,9 @@ import quasar.qscript.InterpretedRead
 
 import shims._
 
-final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr: Sync](
+final class PostgresDatasource[F[_]: MonadResourceErr: Sync](
     xa: Transactor[F])
-    extends LightweightDatasource[F, Stream[F, ?], QueryResult[F]]
+    extends LightweightDatasource[Resource[F, ?], Stream[F, ?], QueryResult[F]]
     with Logging {
 
   import PostgresDatasource._
@@ -69,41 +69,41 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
 
         xa.connect(xa.kernel)
           .evalMap(c => runCIO(c)(back.map(_.map(_.leftMap(_.translate(runCIO(c)))))))
-          .allocated
-          .flatMap {
-            case (Right((s, stages)), release) =>
-              QueryResult.typed(DataFormat.ldjson, s.onFinalize(release), stages).pure[F]
+          .evalMap {
+            case Right((s, stages)) =>
+              QueryResult.typed(DataFormat.ldjson, s, stages).pure[F]
 
-            case (Left(re), release) =>
-              release >> MonadResourceErr[F].raiseError(re)
+            case Left(re) =>
+              MonadResourceErr[F].raiseError(re)
           }
 
       case _ =>
-        MonadResourceErr[F].raiseError(RE.notAResource(ir.path))
+        Resource.liftF(MonadResourceErr[F].raiseError(RE.notAResource(ir.path)))
     }
   }))
 
-  def pathIsResource(path: ResourcePath): F[Boolean] =
-    pathToLoc(path) match {
+  def pathIsResource(path: ResourcePath): Resource[F, Boolean] =
+    Resource.liftF(pathToLoc(path) match {
       case Some(Right((schema, table))) =>
         tableExists(schema, table).transact(xa)
 
       case _ => false.pure[F]
-    }
+    })
 
-  def prefixedChildPaths(prefixPath: ResourcePath): F[Option[Stream[F, (ResourceName, RPT.Physical)]]] =
+  def prefixedChildPaths(prefixPath: ResourcePath): Resource[F, Option[Stream[F, (ResourceName, RPT.Physical)]]] =
     if (prefixPath === ResourcePath.Root)
       allSchemas
         .map(n => (ResourceName(n), RPT.prefix))
         .transact(xa)
         .some
-        .pure[F]
+        .pure[Resource[F, ?]]
     else
       pathToLoc(prefixPath) match {
         case Some(Right((schema, table))) =>
-          tableExists(schema, table)
-            .map(p => if (p) Some(Stream.empty.covaryAll[F, (ResourceName, RPT.Physical)]) else None)
-            .transact(xa)
+          Resource.liftF(
+            tableExists(schema, table)
+              .map(p => if (p) Some(Stream.empty.covaryAll[F, (ResourceName, RPT.Physical)]) else None)
+              .transact(xa))
 
         case Some(Left(schema)) =>
           val l = Some(schema).filterNot(containsWildcard).map(Left(_))
@@ -116,17 +116,12 @@ final class PostgresDatasource[F[_]: Bracket[?[_], Throwable]: MonadResourceErr:
               .flatMap(t => Pull.output1(t.map(_._2)))
               .stream
 
-          val back = for {
+          for {
             c <- xa.connect(xa.kernel)
             opt <- paths.translate(runCIO(c)).compile.resource.lastOrError
           } yield opt.map(_.translate(runCIO(c)))
 
-          back.allocated flatMap {
-            case (o @ None, release) => release.as(o)
-            case (Some(s), release) => s.onFinalize(release).some.pure[F]
-          }
-
-        case None => (None: Option[Stream[F, (ResourceName, RPT.Physical)]]).pure[F]
+        case None => (None: Option[Stream[F, (ResourceName, RPT.Physical)]]).pure[Resource[F, ?]]
       }
 
   ////
@@ -278,4 +273,9 @@ object PostgresDatasource {
       "TEMPORARY TABLE",
       "TEMPORARY VIEW",
       "VIEW")
+
+  def apply[F[_]: MonadResourceErr: Sync](
+      xa: Transactor[F])
+      : LightweightDatasource[Resource[F, ?], Stream[F, ?], QueryResult[F]] =
+    new PostgresDatasource(xa)
 }

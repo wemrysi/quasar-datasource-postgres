@@ -45,7 +45,7 @@ import quasar.qscript.InterpretedRead
 
 import scala.concurrent.ExecutionContext.Implicits.global
 
-import shims._
+import shims.applicativeToScalaz
 
 object PostgresDatasourceSpec
     extends DatasourceSpec[IO, Stream[IO, ?], RPT.Physical]
@@ -75,7 +75,9 @@ object PostgresDatasourceSpec
     "jdbc:postgresql://localhost:54322/postgres?user=postgres&password=postgres",
     xaBlocker)
 
-  val datasource = new PostgresDatasource(xa)
+  val pgds: LightweightDatasourceModule.DS[IO] = PostgresDatasource[IO](xa)
+
+  val datasource = Resource.pure(pgds)
 
   val nonExistentPath = ResourcePath.root() / ResourceName("schemadne") / ResourceName("tabledne")
 
@@ -110,20 +112,20 @@ object PostgresDatasourceSpec
 
   implicit class DatasourceOps(val ds: LightweightDatasourceModule.DS[IO]) extends scala.AnyVal {
     def evaluate(ir: InterpretedRead[ResourcePath]) =
-      ds.loadFull(ir) getOrElseF IO.raiseError(new RuntimeException("No batch loader!"))
+      ds.loadFull(ir) getOrElseF Resource.liftF(IO.raiseError(new RuntimeException("No batch loader!")))
   }
 
   "schema handling" >> {
     "public tables are resources under /public, by default" >>* {
-      datasource
+      pgds
         .pathIsResource(ResourcePath.root() / ResourceName("public") / ResourceName("pgsrcPublic1"))
-        .map(_ must beTrue)
+        .use(b => IO.pure(b must beTrue))
     }
 
     "tables in created schemas are resources" >>* {
-      datasource
+      pgds
         .pathIsResource(ResourcePath.root() / ResourceName("pgsrcSchemaB") / ResourceName("tableB1"))
-        .map(_ must beTrue)
+        .use(b => IO.pure(b must beTrue))
     }
   }
 
@@ -141,8 +143,8 @@ object PostgresDatasourceSpec
         .flatMap(c =>
           Resource.make(setup)(_ => teardown.void)
             .mapK(λ[ConnectionIO ~> IO](_.foldMap(xa.interpret).run(c))))
-        .use(_ => datasource.pathIsResource(ResourcePath.root() / ResourceName(schema) / ResourceName(table)))
-        .map(_ must beTrue)
+        .flatMap(_ => pgds.pathIsResource(ResourcePath.root() / ResourceName(schema) / ResourceName(table)))
+        .use(b => IO.pure(b must beTrue))
     }
 
     "support schema names containing '_'" >>* mustBeAResource("some_schema_x", "tablex")
@@ -158,7 +160,7 @@ object PostgresDatasourceSpec
     "path with length 0 fails with not a resource" >>* {
       val ir = InterpretedRead(ResourcePath.root(), ScalarStages.Id)
 
-      MonadResourceErr.attempt(datasource.evaluate(ir))
+      MonadResourceErr.attempt(pgds.evaluate(ir).use(_ => IO.unit))
         .map(_.toEither must beLeft(RE.notAResource(ir.path)))
     }
 
@@ -167,7 +169,7 @@ object PostgresDatasourceSpec
         ResourcePath.root() / ResourceName("a"),
         ScalarStages.Id)
 
-      MonadResourceErr.attempt(datasource.evaluate(ir))
+      MonadResourceErr.attempt(pgds.evaluate(ir).use(_ => IO.unit))
         .map(_.toEither must beLeft(RE.notAResource(ir.path)))
     }
 
@@ -176,14 +178,14 @@ object PostgresDatasourceSpec
         ResourcePath.root() / ResourceName("x") / ResourceName("y") / ResourceName("z"),
         ScalarStages.Id)
 
-      MonadResourceErr.attempt(datasource.evaluate(ir))
+      MonadResourceErr.attempt(pgds.evaluate(ir).use(_ => IO.unit))
         .map(_.toEither must beLeft(RE.notAResource(ir.path)))
     }
 
     "path with length 2 that isn't a table fails with path not found" >>* {
       val ir = InterpretedRead(nonExistentPath, ScalarStages.Id)
 
-      MonadResourceErr.attempt(datasource.evaluate(ir))
+      MonadResourceErr.attempt(pgds.evaluate(ir).use(_ => IO.unit))
         .map(_.toEither must beLeft(RE.pathNotFound(ir.path)))
     }
 
@@ -192,7 +194,7 @@ object PostgresDatasourceSpec
         ResourcePath.root() / ResourceName("pgsrcSchemaA") / ResourceName("tableA1"),
         ScalarStages.Id)
 
-      datasource.evaluate(ir) flatMap {
+      pgds.evaluate(ir) use {
         case QueryResult.Typed(fmt, bs, stages) =>
           fmt must_=== DataFormat.ldjson
           stages must_=== ScalarStages.Id
@@ -391,7 +393,7 @@ object PostgresDatasourceSpec
 
   private def resultsOf[A: DecodeJson](ir: InterpretedRead[ResourcePath])
       : IO[(ScalarStages, List[A])] =
-    datasource.evaluate(ir) flatMap {
+    pgds.evaluate(ir) use {
       case QueryResult.Typed(_, s, stages) =>
         s.chunks.parseJsonStream[Json]
           .map(_.as[A].toOption)
