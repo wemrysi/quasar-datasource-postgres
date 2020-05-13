@@ -74,7 +74,7 @@ final class PostgresDatasource[F[_]: MonadResourceErr: Sync](
               QueryResult.typed(DataFormat.ldjson, s, stages).pure[F]
 
             case Left(re) =>
-              MonadResourceErr[F].raiseError(re)
+              MonadResourceErr[F].raiseError[QueryResult[F]](re)
           }
 
       case _ =>
