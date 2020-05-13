@@ -77,7 +77,7 @@ object PostgresDatasourceSpec
 
   val pgds: LightweightDatasourceModule.DS[IO] = PostgresDatasource[IO](xa)
 
-  val datasource = Resource.pure(pgds)
+  val datasource = pgds.pure[Resource[IO, ?]]
 
   val nonExistentPath = ResourcePath.root() / ResourceName("schemadne") / ResourceName("tabledne")
 
