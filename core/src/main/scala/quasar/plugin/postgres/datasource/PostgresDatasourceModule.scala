@@ -64,6 +64,9 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       .map(_.sanitized.asJson)
       .getOr(jEmptyObject)
 
+  def reconfigure(original: Json, patch: Json): Either[DE.ConfigurationError[Json], Json] =
+    Right(patch)
+
   def lightweightDatasource[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer, A: Hash](
       config: Json,
       rateLimiter: RateLimiting[F, A],
