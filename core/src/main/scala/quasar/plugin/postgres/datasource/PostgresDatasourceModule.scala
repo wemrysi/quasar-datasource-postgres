@@ -40,7 +40,7 @@ import quasar.RateLimiting
 import quasar.api.datasource.{DatasourceError => DE, DatasourceType}
 import quasar.{concurrent => qc}
 import quasar.connector.{ByteStore, MonadResourceErr}
-import quasar.connector.datasource.LightweightDatasourceModule
+import quasar.connector.datasource.{LightweightDatasourceModule, Reconfiguration}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
@@ -64,8 +64,8 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       .map(_.sanitized.asJson)
       .getOr(jEmptyObject)
 
-  def reconfigure(original: Json, patch: Json): Either[DE.ConfigurationError[Json], Json] =
-    Right(patch)
+  def reconfigure(original: Json, patch: Json): Either[DE.ConfigurationError[Json], (Reconfiguration, Json)] =
+    Right((Reconfiguration.Reset, patch))
 
   def lightweightDatasource[F[_]: ConcurrentEffect: ContextShift: MonadResourceErr: Timer, A: Hash](
       config: Json,
