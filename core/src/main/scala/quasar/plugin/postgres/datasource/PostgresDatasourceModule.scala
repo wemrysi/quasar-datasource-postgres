@@ -29,8 +29,6 @@ import doobie._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
 
-import eu.timepit.refined.auto._
-
 import java.net.URI
 import java.util.concurrent.Executors
 
