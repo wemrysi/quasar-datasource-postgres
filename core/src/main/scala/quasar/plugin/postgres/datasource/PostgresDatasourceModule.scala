@@ -62,6 +62,9 @@ object PostgresDatasourceModule extends LightweightDatasourceModule with Logging
       .map(_.sanitized.asJson)
       .getOr(jEmptyObject)
 
+  def migrateConfig[F[_]: Sync](config: Json): F[Either[DE.ConfigurationError[Json], Json]] =
+    Sync[F].pure(Right(config))
+
   def reconfigure(original: Json, patch: Json): Either[DE.ConfigurationError[Json], (Reconfiguration, Json)] =
     Right((Reconfiguration.Reset, patch))
 
